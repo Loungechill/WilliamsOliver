@@ -1,0 +1,98 @@
+name: Update filtered feed
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 */6 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: williams-oliver-feed-update
+  cancel-in-progress: false
+
+jobs:
+  update-feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build and validate filtered XML
+        run: |
+          python3 filter_feed.py \
+            --source "https://williams-oliver.ru/api/feed/diginetica" \
+            --blacklist blocked_vendors.txt \
+            --output feed.xml
+
+      - name: Create new release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="feed-$(date -u +'%Y%m%d-%H%M%S')"
+          TITLE="Feed $(date -u +'%Y-%m-%d %H:%M UTC')"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+          gh release create "$TAG" feed.xml \
+            --title "$TITLE" \
+            --notes "Automatically generated filtered Williams Oliver feed." \
+            --latest=false
+
+      - name: Verify uploaded XML
+        run: |
+          RELEASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/feed.xml"
+
+          curl -fL \
+            --retry 5 \
+            --retry-delay 3 \
+            --connect-timeout 20 \
+            --max-time 180 \
+            "$RELEASE_URL" \
+            -o feed.from-release.xml
+
+          cmp --silent feed.xml feed.from-release.xml
+
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          tree = ET.parse("feed.from-release.xml")
+          root = tree.getroot()
+
+          assert root.tag.rsplit("}", 1)[-1] == "yml_catalog"
+
+          print("Release XML validation: OK")
+          PY
+
+      - name: Promote verified release to Latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "$TAG" --latest
+
+      - name: Verify Latest URL
+        run: |
+          LATEST_URL="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/feed.xml"
+
+          curl -fL \
+            --retry 5 \
+            --retry-delay 3 \
+            --connect-timeout 20 \
+            --max-time 180 \
+            "$LATEST_URL" \
+            -o feed.latest.xml
+
+          cmp --silent feed.xml feed.latest.xml
+
+      - name: Record successful update
+        run: |
+          printf '%s\n' "$TAG" > last_success.txt
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add last_success.txt
+          git commit -m "chore: record successful feed update" || exit 0
+          git push
