@@ -1,0 +1,102 @@
+name: Update segmented feeds
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - filter_search_feed.py
+      - filter_networks_feed.py
+      - segment_feed.py
+      - blocked_vendors.txt
+      - tests/test_segment_feed.py
+      - .github/workflows/update-segmented-feeds.yml
+  schedule:
+    # Отдельный запуск через 20 минут после существующего обновления основного фида.
+    - cron: "43 */6 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: williams-oliver-segmented-feeds
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify filtering rules
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Build both feeds from the same source snapshot
+        run: |
+          mkdir -p build
+          python3 - <<'PY'
+          from pathlib import Path
+          from segment_feed import SOURCE, download
+          Path('build/source.xml').write_bytes(download(SOURCE))
+          PY
+          python3 filter_search_feed.py --source build/source.xml --output build/feed_search.xml --report build/search.json
+          python3 filter_networks_feed.py --source build/source.xml --output build/feed_networks.xml --report build/networks.json
+
+      - name: Publish separate release without changing the original Latest feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="segments-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "SEGMENT_TAG=$TAG" >> "$GITHUB_ENV"
+          gh release create "$TAG" build/feed_search.xml build/feed_networks.xml \
+            --target "$GITHUB_SHA" --latest=false \
+            --title "Search and networks feeds ${GITHUB_RUN_ID}" \
+            --notes "Separate feeds: blocked vendors excluded; impressions strictly above the configured threshold excluded. Original Latest release unchanged."
+
+      - name: Verify uploaded XML before publishing the new links
+        run: |
+          for CHANNEL in search networks; do
+            URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${SEGMENT_TAG}/feed_${CHANNEL}.xml"
+            curl -fL --retry 5 --retry-delay 3 --connect-timeout 20 --max-time 180 \
+              "$URL" -o "build/verified_${CHANNEL}.xml"
+            cmp --silent "build/feed_${CHANNEL}.xml" "build/verified_${CHANNEL}.xml"
+          done
+
+      - name: Atomically update only the new feed manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import subprocess
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          tag = os.environ['SEGMENT_TAG']
+          manifest = {'generated_at': datetime.now(timezone.utc).isoformat(), 'release_tag': tag}
+          for channel in ['search', 'networks']:
+              stats = json.loads(Path(f'build/{channel}.json').read_text())
+              manifest[channel] = {
+                  **stats,
+                  'url': f'https://github.com/{repo}/releases/download/{tag}/feed_{channel}.xml',
+              }
+          content = json.dumps(manifest, ensure_ascii=False, indent=2) + '\n'
+          endpoint = f'repos/{repo}/contents/segmented_feeds.json'
+          read = subprocess.run(['gh', 'api', endpoint, '--jq', '.sha'], capture_output=True, text=True)
+          payload = {
+              'message': 'chore: publish verified search and networks feed links',
+              'branch': 'main',
+              'content': base64.b64encode(content.encode()).decode(),
+          }
+          if read.returncode == 0:
+              payload['sha'] = read.stdout.strip()
+          elif 'HTTP 404' not in read.stderr:
+              raise RuntimeError(read.stderr)
+          Path('build/manifest-request.json').write_text(json.dumps(payload))
+          subprocess.run(['gh', 'api', '--method', 'PUT', endpoint, '--input', 'build/manifest-request.json'], check=True, stdout=subprocess.DEVNULL)
+          print('Verified feeds published. Only segmented_feeds.json was updated.')
+          PY
