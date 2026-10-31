@@ -1,26 +1,26 @@
 {
-  "generated_at": "2026-10-31T13:04:48.220688+00:00",
-  "release_tag": "segments-41203907854-1",
+  "generated_at": "2026-10-31T21:52:51.161464+00:00",
+  "release_tag": "segments-41245601444-1",
   "search": {
-    "source_offers": 6147,
+    "source_offers": 6138,
     "removed_brands": 0,
-    "removed_impressions": 550,
-    "remaining_offers": 5597,
+    "removed_impressions": 549,
+    "remaining_offers": 5589,
     "threshold": 1000,
     "excluded_ids_in_sheet": 884,
     "statistics_product_rows": 9949,
     "ignored_nonproduct_rows": 20,
-    "url": "https://github.com/Loungechill/WilliamsOliver/releases/download/segments-41203907854-1/feed_search.xml"
+    "url": "https://github.com/Loungechill/WilliamsOliver/releases/download/segments-41245601444-1/feed_search.xml"
   },
   "networks": {
-    "source_offers": 6147,
+    "source_offers": 6138,
     "removed_brands": 0,
-    "removed_impressions": 503,
-    "remaining_offers": 5644,
+    "removed_impressions": 502,
+    "remaining_offers": 5636,
     "threshold": 1000,
     "excluded_ids_in_sheet": 888,
     "statistics_product_rows": 9338,
     "ignored_nonproduct_rows": 0,
-    "url": "https://github.com/Loungechill/WilliamsOliver/releases/download/segments-41203907854-1/feed_networks.xml"
+    "url": "https://github.com/Loungechill/WilliamsOliver/releases/download/segments-41245601444-1/feed_networks.xml"
   }
 }
